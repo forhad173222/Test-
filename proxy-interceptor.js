@@ -10,7 +10,7 @@
 (function() {
   'use strict';
 
-  // Domínios que NÃO devem ser proxied (domínios locais/internos)
+  // Domínios que NÃO devem ser proxied (domínios locais/internos e Firebase)
   var BYPASS_DOMAINS = [
     'localhost',
     '127.0.0.1',
