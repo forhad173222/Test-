@@ -22,6 +22,13 @@
     // APIs internas do app
     'monetag-postback-server-production.up.railway.app',
     'manus-analytics.com',
+    // Firebase Domains (Adicionados para evitar erros de Auth/Network)
+    'firebaseapp.com',
+    'firebaseio.com',
+    'googleapis.com',
+    'identitytoolkit.googleapis.com',
+    'securetoken.googleapis.com',
+    'firestore.googleapis.com'
   ];
 
   // Função para verificar se uma URL é externa e deve ser proxied
