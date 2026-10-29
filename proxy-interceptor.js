@@ -69,10 +69,9 @@
     }
   }
 
-    // Função para converter URL para URL do proxy
+      // Função para converter URL para URL doproxy
   function toProxyUrl(url) {
     var urlStr = url.toString();
-    // Remover protocolo
     if (urlStr.startsWith('https://')) {
       urlStr = urlStr.substring(8);
     } else if (urlStr.startsWith('http://')) {
@@ -80,8 +79,13 @@
     } else if (urlStr.startsWith('//')) {
       urlStr = urlStr.substring(2);
     }
-    return '/proxy/' + urlStr;
+    
+    // এখানে আপনার রেন্ডারের লাইভ ব্যাকএন্ড লিংকটি দিন (যেমন: https://your-app-name.onrender.com)
+    var renderBackendUrl = 'https://test-3-0505.onrender.com'; 
+    
+    return renderBackendUrl + '/proxy/' + urlStr;
   }
+
   
 
   // ===== INTERCEPTAR FETCH =====
