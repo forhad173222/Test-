@@ -1140,25 +1140,83 @@
             }
         }
 
-        function showNativeAdPopup(task) {
+                function showNativeAdPopup(task) {
             const adSettings = appConfig.adSettings || {};
-            let adUrl = "";
+            
+            // যদি Earning Reward (Monetag) হয়
+            if (task.id === 'interstitial') {
+                const zoneId = adSettings.monetagZoneId; // অ্যাডমিন প্যানেল থেকে সেট করা জোন আইডি
+                if (!zoneId) {
+                    return showAlert("Monetag Zone ID is missing in Admin panel.", null, false, true);
+                }
 
-            if (task.id === 'interstitial' && adSettings.monetagZoneId) {
-                adUrl = `//libtl.com/?zone=${adSettings.monetagZoneId}`;
-            } else if (task.id === 'video' && adSettings.gigapubId) {
-                adUrl = `https://ad.gigapub.tech/script?id=${adSettings.gigapubId}`;
+                // Monetag এর সঠিক পপআপ/ইন্টারস্টিশিয়াল জোন স্ক্রিপ্ট লোড ও ট্রিগার করা
+                loader.style.display = 'flex';
+                loadAdNetworkScript({ activeNetwork: 'monetag', monetagZoneId: zoneId }).then(() => {
+                    loader.style.display = 'none';
+                    const showFn = window[`show_${zoneId}`];
+                    if (typeof showFn === 'function') {
+                        // জোন আইডি অনুযায়ী অ্যাড পপআপ কল করা
+                        showFn().then(() => {
+                            // ইউজার অ্যাড দেখে শেষ করলে টাস্ক সফল হবে
+                            completeTask(task);
+                        }).catch(err => {
+                            console.warn("Ad display error:", err);
+                        });
+                    } else {
+                        // ফলব্যাক হিসেবে ডিরেক্ট জোন লিংক ওপেন হবে
+                        const adUrl = `//libtl.com/?zone=${zoneId}`;
+                        openAdWindow(adUrl, task);
+                    }
+                }).catch(err => {
+                    loader.style.display = 'none';
+                    showAlert("Failed to load ad network.", null, false, true);
+                });
+
+            } else if (task.id === 'video') {
+                // Gigapub বা অন্য নেটওয়ার্কের জন্য
+                const gId = adSettings.gigapubId;
+                if (!gId) {
+                    return showAlert("GigaPub ID is missing in Admin panel.", null, false, true);
+                }
+                loader.style.display = 'flex';
+                loadAdNetworkScript({ activeNetwork: 'gigapub', gigapubId: gId }).then(async () => {
+                    loader.style.display = 'none';
+                    if (typeof window.showGiga === 'function') {
+                        await window.showGiga();
+                        completeTask(task);
+                    } else {
+                        showAlert("GigaPub failed to load.", null, false, true);
+                    }
+                }).catch(() => {
+                    loader.style.display = 'none';
+                    showAlert("Failed to load GigaPub.", null, false, true);
+                });
             } else {
-                adUrl = task.url || "https://www.monetag.com";
+                // অন্যান্য কাস্টম টাস্কের লিংক
+                if (task.url) {
+                    openAdWindow(task.url, task);
+                }
             }
+        }
 
-            // সরাসরি নতুন উইন্ডো বা ট্যাবে অ্যাড পপআপ ওপেন হবে (কোনো টাইমার বা লোডিং স্ক্রিন থাকবে না)
-            const adWin = window.open(adUrl, '_blank');
-
+        // আলাদা একটি উইন্ডো ওপেন করে ইউজার রিটার্ন ট্র্যাক করার হেল্পার ফাংশন
+        function openAdWindow(url, task) {
+            const adWin = window.open(url, '_blank');
             if (!adWin) {
-                showAlert("Please allow pop-ups in your browser to view ads.", null, false, true);
+                showAlert("Please allow pop-ups in your browser.", null, false, true);
                 return;
             }
+            const interval = setInterval(() => {
+                if (adWin.closed) {
+                    clearInterval(interval);
+                    completeTask(task);
+                }
+            }, 1000);
+        }
+
+
+            
 
             // ইউজার অ্যাড দেখে ট্যাব কেটে দিয়ে অ্যাপে ফিরে আসলেই টাস্ক সফল ও কয়েন যোগ হয়ে যাবে
             const interval = setInterval(() => {
