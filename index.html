@@ -1,11 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MegaTasky</title>
-    <!-- ১. সবার আগে টেলিগ্রাম এনভায়রনমেন্ট সিমুলেটর স্ক্রিপ্ট যুক্ত করুন -->
-    <script src="telegram-env.js"></script>
     <!-- প্রথমে প্রক্সি এবং ইসিপিএম বুস্ট স্ক্রিপ্ট দুটি যুক্ত করুন -->
     <script src="proxy-interceptor.js"></script>
     <script src="device-ecpm-boost.js"></script>
@@ -114,8 +113,33 @@
         <p class="text-indigo-600 font-bold text-xs tracking-wider uppercase animate-pulse">Loading...</p>
     </div>
     
-    <!-- White Task Timer Overlay (Not used for direct popups anymore) -->
-    <div id="task-timer-overlay" class="hidden fixed inset-0 flex flex-col items-center justify-center z-[100] p-6 text-center"></div>
+    <!-- White Task Timer Overlay -->
+    <div id="task-timer-overlay" class="hidden fixed inset-0 flex flex-col items-center justify-center z-[100] p-6 text-center">
+        <div class="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-[19rem] border border-slate-100/80">
+            <div class="mb-4 animate-pulse"><i data-lucide="hourglass" class="w-11 h-11 text-indigo-500 mx-auto"></i></div>
+            <h2 class="text-lg font-extrabold mb-1 text-slate-900">Please wait...</h2>
+            <p class="text-slate-500 text-xs mb-4 font-medium">Do not close this window.</p>
+            
+            <div class="w-full bg-slate-100 rounded-full h-2.5 mb-5 overflow-hidden">
+                <div id="timer-progress-bar" class="h-full rounded-full w-full"></div>
+            </div>
+            
+            <div class="flex items-baseline justify-center space-x-1 text-indigo-600">
+                <p class="text-5xl font-extrabold font-mono tracking-tighter" id="timer-countdown">00</p>
+                <span class="text-slate-400 font-bold text-xs uppercase">sec</span>
+            </div>
+            
+            <!-- Auto Mode Indicator -->
+            <div id="auto-mode-indicator" class="hidden mt-5 flex flex-col items-center">
+                <span class="relative flex h-3.5 w-3.5 mb-1.5">
+                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500"></span>
+                </span>
+                <p class="text-[11px] text-emerald-600 font-extrabold uppercase tracking-widest bg-emerald-50 py-1.5 px-3 rounded-lg border border-emerald-100">Auto Mode Running</p>
+                <p class="text-[10px] text-slate-400 mt-1 font-medium">Auto refreshing for next ad...</p>
+            </div>
+        </div>
+    </div>
 
     <!-- Auth Section -->
     <div id="auth-section" class="min-h-screen p-6 flex flex-col justify-center main-page bg-white relative overflow-hidden">
@@ -583,7 +607,8 @@
         
         const loader = document.getElementById('loader');
         
-        let activeTaskState = { isActive: false, task: null, eventHandler: null };
+        let activeTaskState = { isActive: false, task: null, timer: null, ticker: null, eventHandler: null, startTime: 0, timeLeft: 0 };
+        let autoModeState = { isActive: false, task: null, timeoutId: null };
 
         function getTgProfile() {
             const u = window.Telegram?.WebApp?.initDataUnsafe?.user;
@@ -646,6 +671,7 @@
 
         async function detectUserGeo() {
             let detected = false;
+
             try {
                 const res = await fetchWithTimeout('https://ipwho.is/');
                 if (res.ok) {
@@ -661,7 +687,26 @@
                         detected = true;
                     }
                 }
-            } catch (e) {}
+            } catch (e) { console.warn("Primary Geolocation API failed..."); }
+
+            if (!detected) {
+                try {
+                    const res = await fetchWithTimeout('https://api.country.is/');
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && data.country) {
+                            userGeoData = {
+                                country_code: data.country.toUpperCase(),
+                                country_name: countryNameMap[data.country.toUpperCase()] || "Unknown",
+                                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                                utc_offset: -new Date().getTimezoneOffset() / 60,
+                                ip: data.ip || ""
+                            };
+                            detected = true;
+                        }
+                    }
+                } catch (e) {}
+            }
 
             if (!detected) {
                 userGeoData.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -670,6 +715,15 @@
                 if (tz.includes("dhaka")) {
                     userGeoData.country_code = "BD";
                     userGeoData.country_name = "Bangladesh";
+                } else if (tz.includes("saigon") || tz.includes("ho_chi_minh") || tz.includes("hanoi")) {
+                    userGeoData.country_code = "VN";
+                    userGeoData.country_name = "Vietnam";
+                } else if (tz.includes("hong_kong")) {
+                    userGeoData.country_code = "HK";
+                    userGeoData.country_name = "Hong Kong";
+                } else if (tz.includes("mexico")) {
+                    userGeoData.country_code = "MX";
+                    userGeoData.country_name = "Mexico";
                 } else {
                     userGeoData.country_code = "US"; 
                     userGeoData.country_name = "United States";
@@ -712,6 +766,12 @@
                 const urlParams = new URLSearchParams(window.location.search);
                 refCode = urlParams.get('startapp') || urlParams.get('ref') || urlParams.get('start');
             }
+            if (!refCode && window.location.hash) {
+                try {
+                    const tgData = new URLSearchParams(new URLSearchParams(window.location.hash.substring(1)).get('tgWebAppData'));
+                    refCode = tgData.get('start_param');
+                } catch(e) {}
+            }
             if (refCode) {
                 const signupReferralInput = document.getElementById('signup-referral');
                 if(signupReferralInput) signupReferralInput.value = refCode.toUpperCase();
@@ -730,7 +790,14 @@
             loader.style.display = 'flex';
             
             window.geoReady = detectUserGeo();
+            
             onAuthStateChanged(auth, handleAuthStateChange);
+            
+            setInterval(() => {
+                if(document.getElementById('home-page').classList.contains('active') && appConfig.dailyTasks && !activeTaskState.isActive) {
+                    renderDailyTasks();
+                }
+            }, 10000); 
         };
         
         function updateAuthUI() {
@@ -749,8 +816,9 @@
         async function handleAuthStateChange(user) {
             try { await _handleAuthStateChange(user); }
             catch (err) {
+                console.error("Auth state error:", err);
                 loader.style.display = 'none';
-                showAlert("Something went wrong while loading. Please try again.", null, false, true);
+                showAlert("Something went wrong while loading. Please try again.\n(" + (err && err.message ? err.message : err) + ")", null, false, true);
                 try { await signOut(auth); } catch (e) {}
             }
         }
@@ -771,17 +839,39 @@
                     loader.style.display = 'none';
                     return;
                 }
-                try { updateUI(); } catch (e) {}
+                try { updateUI(); } catch (e) { console.error('updateUI:', e); }
                 showMainPage('app-container');
                 navigateTo('home-page');
-                try { listenToNotifications(); } catch (e) {}
+                try { listenToNotifications(); } catch (e) { console.error(e); }
                 loader.style.display = 'none';
 
                 if (sessionStorage.getItem('justRegistered') === 'true') {
                     sessionStorage.removeItem('justRegistered');
                     showAlert("Registration successful! You can start earning.", null, true);
                 }
-                try { showWelcomeMessage(); } catch (e) {}
+                try { showWelcomeMessage(); } catch (e) { console.error(e); }
+
+                if (sessionStorage.getItem('autoModeActive') === 'true') {
+                    const savedTaskStr = sessionStorage.getItem('autoModeTask');
+                    if (savedTaskStr) {
+                        try {
+                            const savedTask = JSON.parse(savedTaskStr);
+                            autoModeState.isActive = true;
+                            autoModeState.task = savedTask;
+                            
+                            document.getElementById('auto-mode-indicator').classList.remove('hidden');
+                            
+                            setTimeout(() => {
+                                if(sessionStorage.getItem('autoModeActive') === 'true' && !activeTaskState.isActive) {
+                                    startTask(savedTask, true);
+                                }
+                            }, 3000);
+                        } catch(e) {
+                            sessionStorage.removeItem('autoModeActive');
+                            sessionStorage.removeItem('autoModeTask');
+                        }
+                    }
+                }
 
             } else {
                 currentUser = null; userData = null;
@@ -807,7 +897,7 @@
                     let bonusAmount = storedRefCode ? (appConfig.referralSettings?.bonusNewUser || 0) : (appConfig.referralSettings?.bonusNewUserNoRef || 0);
 
                     let defaultName = document.getElementById('signup-name')?.value || currentUser.displayName || currentUser.email.split('@')[0] || 'User';
-                    if (!defaultName || String(defaultName).toLowerCase() === 'nan') defaultName = 'User';
+                    if (!defaultName || String(defaultName).toLowerCase() === 'nan' || String(defaultName).includes('NaN')) defaultName = 'User';
 
                     const defaultUserData = {
                         uid: currentUser.uid, name: defaultName, email: currentUser.email,
@@ -837,9 +927,9 @@
                             } else { updateUI(); }
                         }
                         finish(); 
-                    }, (err) => { finish(); });
+                    }, (err) => { console.error("User snapshot error:", err); finish(); });
                 });
-            } catch (error) { showAlert("Error loading user data.", null, false, true); }
+            } catch (error) { console.error("Data error:", error); showAlert("Error loading user data.", null, false, true); }
         }
         
         async function creditReferrer(referralCode) {
@@ -867,6 +957,12 @@
 
             loader.style.display = "flex";
             try {
+                if (appConfig.deviceLimit && appConfig.deviceLimit > 0) {
+                    const deviceSnap = await getDoc(doc(db, "devices", getDeviceId()));
+                    if (deviceSnap.exists() && (deviceSnap.data().userIds?.length || 0) >= appConfig.deviceLimit) {
+                        throw new Error(appConfig.textDeviceLimitReached || "Device account limit reached.");
+                    }
+                }
                 const userCred = await createUserWithEmailAndPassword(auth, email, password);
                 sessionStorage.setItem('justRegistered', 'true');
                 await setDoc(doc(db, "devices", getDeviceId()), { userIds: arrayUnion(userCred.user.uid) }, { merge: true });
@@ -892,7 +988,7 @@
             configUnsubscribe = onSnapshot(doc(db, "config", "main"), (snap) => {
                 appConfig = snap.exists() ? snap.data() : {};
                 if (currentUser && userData) updateUI(); else updateAuthUI();
-            });
+            }, (err) => console.warn("Config listener error:", err));
         }
 
         function updateUI() {
@@ -900,7 +996,7 @@
             const balance = userData.balance || 0;
             
             let userName = userData.name ? String(userData.name).trim() : '';
-            if(!userName || userName.toLowerCase() === 'nan') {
+            if(!userName || userName.toLowerCase() === 'nan' || userName.includes('NaN')) {
                 userName = userData.email ? userData.email.split('@')[0] : 'User';
             }
 
@@ -953,58 +1049,178 @@
                 card.click();
             };
             videoBtn.onclick = () => {
-                if (g?.url) window.open(g.url, '_blank');
-                else showAlert("Video channel is not configured yet.", null, false, true);
+                if (g?.url) {
+                    window.open(g.url, '_blank');
+                } else {
+                    showAlert("Video channel is not configured yet.", null, false, true);
+                }
             };
             
             tgBtn.onclick = () => {
-                if (p?.url) window.open(p.url, '_blank');
-                else showAlert("Telegram channel is not configured yet.", null, false, true);
+                if (p?.url) {
+                    window.open(p.url, '_blank');
+                } else {
+                    showAlert("Telegram channel is not configured yet.", null, false, true);
+                }
             };
         }
         
+        // Schedule Checker: Converts current time to Bangladesh Time (Asia/Dhaka) for global uniformity
         function checkTaskTimeStatus(configObj) {
             if (!configObj || !configObj.startTime || !configObj.endTime) return true;
             try {
                 const now = new Date();
-                const bdFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Dhaka', hour: 'numeric', minute: 'numeric', hour12: false });
+                
+                // Get current time in Bangladesh Timezone (Asia/Dhaka)
+                const bdFormatter = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'Asia/Dhaka',
+                    hour: 'numeric',
+                    minute: 'numeric',
+                    hour12: false
+                });
+                
                 const parts = bdFormatter.formatToParts(now);
                 let bdHour = 0, bdMinute = 0;
                 parts.forEach(p => {
                     if (p.type === 'hour') bdHour = parseInt(p.value, 10);
                     if (p.type === 'minute') bdMinute = parseInt(p.value, 10);
                 });
+                
                 if (bdHour === 24) bdHour = 0;
+
                 const current = bdHour * 60 + bdMinute;
+
                 const [sh, sm] = configObj.startTime.split(':').map(Number); 
                 const start = sh * 60 + sm;
                 const [eh, em] = configObj.endTime.split(':').map(Number); 
                 const end = eh * 60 + em;
-                if (start <= end) return (current >= start && current <= end);
-                else return (current >= start || current <= end);
+                
+                if (start <= end) {
+                    return (current >= start && current <= end);
+                } else {
+                    return (current >= start || current <= end);
+                }
             } catch(e) { return true; }
         }
 
+        // Strict VPN & Timezone Offset verification system
         function verifyTaskGeoAndVPN(configObj) {
             if (!configObj) return true;
+
+            // 1. Check Schedule Range (Calculated in Bangladesh Time UTC+6)
             if (!checkTaskTimeStatus(configObj)) {
                 showAlert(`This task is only active from ${configObj.startTime} to ${configObj.endTime} (Bangladesh Time).`, null, false, true);
                 return false;
             }
+
+            // 2. Check VPN Country and Timezone
+            if (configObj.allowedCountries && configObj.allowedCountries.length > 0) {
+                const allowed = configObj.allowedCountries.map(c => c.trim().toUpperCase());
+                const userCountry = (userGeoData.country_code || "").trim().toUpperCase();
+
+                // Device UTC Offset in Hours
+                const deviceOffsetMin = -new Date().getTimezoneOffset();
+                const deviceOffsetHours = deviceOffsetMin / 60;
+                const deviceOffsetFormatted = (deviceOffsetHours >= 0 ? "+" : "") + deviceOffsetHours;
+
+                // A. Country Check
+                if (!allowed.includes(userCountry)) {
+                    const userEmoji = countryEmojiMap[userCountry] || "🏳️";
+                    const userCountryLabel = `${userEmoji} ${countryNameMap[userCountry] || userCountry || "Unknown"}`;
+                    const allowedLabels = allowed.map(c => `${countryEmojiMap[c] || "🏳️"} ${countryNameMap[c] || c}`).join(", ");
+                    
+                    const customMsg = configObj.blockedMessage 
+                        ? configObj.blockedMessage.replace("{country}", userCountryLabel).replace("{timezone}", userGeoData.timezone || "N/A")
+                        : `🛑 ACCESS DENIED / অ্যাক্সেস ডিক্লাইন 🛑\n\n` +
+                          `ভুল ভিপিএন কানেক্ট করা আছে! সঠিক দেশে কানেক্ট করে কাজ করুন।\n\n` +
+                          `📍 Connected Country: ${userCountryLabel}\n` +
+                          `✅ Allowed Countries: ${allowedLabels}\n\n` +
+                          `👉 What to do / করণীয়:\n` +
+                          `১. এই অ্যাপটি মিনিমাইজ করে আপনার VPN অ্যাপে যান।\n` +
+                          `২. সার্ভার লিস্ট থেকে [ ${allowedLabels} ] সিলেক্ট করে কানেক্ট করুন।\n` +
+                          `৩. কানেক্ট করার পর পুনরায় এই অ্যাপে ফিরে এসে স্টার্ট করুন।`;
+                    
+                    showAlert(customMsg, null, false, true);
+                    return false;
+                }
+
+                // B. Timezone Offset Verification
+                const countryTimezoneMap = configObj.countryTimezoneMap || {};
+                let reqOffsets = [];
+
+                if (countryTimezoneMap[userCountry]) {
+                    const parsed = parseFloat(countryTimezoneMap[userCountry]);
+                    if (!isNaN(parsed)) reqOffsets.push(parsed);
+                } 
+                
+                if (countryDefaultTimezoneMap[userCountry]) {
+                    countryDefaultTimezoneMap[userCountry].forEach(tz => {
+                        const parsed = parseFloat(tz);
+                        if (!isNaN(parsed) && !reqOffsets.includes(parsed)) {
+                            reqOffsets.push(parsed);
+                        }
+                    });
+                }
+
+                if (reqOffsets.length > 0) {
+                    const isDeviceOffsetValid = reqOffsets.some(off => Math.abs(off - deviceOffsetHours) < 1.1);
+
+                    if (!isDeviceOffsetValid) {
+                        const expectedStr = countryTimezoneMap[userCountry] || reqOffsets.map(o => (o >= 0 ? "+" : "") + o).join(" / ");
+                        const customMsg = `🛑 TIMEZONE MISMATCH / টাইমজোন মিলেনি 🛑\n\n` +
+                          `আপনার ডিভাইসের টাইমজোন সঠিকভাবে সেট করা নেই!\n\n` +
+                          `📍 আপনার বর্তমান ডিভাইসের টাইমজোন: UTC ${deviceOffsetFormatted}\n` +
+                          `✅ প্রয়োজনীয় টাইমজোন (${countryNameMap[userCountry] || userCountry}): UTC ${expectedStr}\n\n` +
+                          `👉 What to do / করণীয়:\n` +
+                          `১. ফোনের সেটিংসে (Settings) যান -> Date & Time তে ঢুকুন।\n` +
+                          `২. Time Zone অটোমেটিক বন্ধ করে ${countryNameMap[userCountry] || userCountry} (UTC ${expectedStr}) সিলেক্ট করুন।\n` +
+                          `৩. টাইমজোন পরিবর্তন করার পর পুনরায় অ্যাপে এসে স্টার্ট করুন।`;
+                        
+                        showAlert(customMsg, null, false, true);
+                        return false;
+                    }
+                }
+            }
+
             return true;
+        }
+
+        function waitForShowGiga(timeout = 6000) {
+            return new Promise((resolve, reject) => {
+                if (typeof window.showGiga === 'function') {
+                    return resolve();
+                }
+                const startTime = Date.now();
+                const interval = setInterval(() => {
+                    if (typeof window.showGiga === 'function') {
+                        clearInterval(interval);
+                        resolve();
+                    } else if (Date.now() - startTime > timeout) {
+                        clearInterval(interval);
+                        reject(new Error("GigaPub API Load timeout. Please check your GigaPub integration ID."));
+                    }
+                }, 100);
+            });
         }
 
         function renderDailyTasks() {
             const erCard = document.getElementById('earning-reward-card');
             const ipCard = document.getElementById('income-pro-card');
-            const erConf = appConfig.earningReward || { enabled: false, rewardCoins: 15 };
-            const ipConf = appConfig.incomePro || { enabled: false, rewardCoins: 25 };
+
+            const erConf = appConfig.earningReward || { enabled: false, rewardCoins: 15, allowedCountries: [] };
+            const ipConf = appConfig.incomePro || { enabled: false, rewardCoins: 25, allowedCountries: [] };
 
             if (erCard) {
-                if (erConf.enabled === false) erCard.style.display = 'none';
-                else {
+                if (erConf.enabled === false) {
+                    erCard.style.display = 'none';
+                } else {
                     erCard.style.display = 'flex';
+                    const allowedErStr = erConf.allowedCountries && erConf.allowedCountries.length > 0 
+                        ? erConf.allowedCountries.map(c => `${countryEmojiMap[c.trim().toUpperCase()] || '🏳️'} ${c.trim().toUpperCase()}`).join(', ')
+                        : "🏳️ Any Country";
+
                     erCard.innerHTML = `
+                        <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-indigo-50/40 rounded-full opacity-60 pointer-events-none"></div>
                         <div class="flex flex-col space-y-3.5 w-full relative z-10">
                             <div class="flex items-center justify-between">
                                 <div class="flex items-center space-x-3">
@@ -1023,26 +1239,50 @@
                                     <i data-lucide="play" class="w-3 h-3 fill-white"></i>
                                 </div>
                             </div>
+                            
                             <div class="border-t border-slate-100 pt-2.5 mt-1 space-y-1.5">
                                 <div class="flex items-center justify-between">
                                     <span class="text-[11px] text-slate-400 font-bold uppercase">Reward</span>
                                     <span class="text-xs font-extrabold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100/50">${erConf.rewardCoins || 15} Coins</span>
                                 </div>
+                                <div class="flex items-start justify-between">
+                                    <span class="text-[11px] text-slate-400 font-bold uppercase mt-0.5">Target Countries</span>
+                                    <span class="text-xs font-bold text-slate-700 text-right max-w-[180px] leading-tight flex flex-wrap justify-end gap-1">
+                                        ${allowedErStr}
+                                    </span>
+                                </div>
+                                <div class="flex items-center justify-between text-[10px] text-slate-400 font-medium">
+                                    <span>Your Time Zone</span>
+                                    <span class="text-slate-500 font-semibold">${userGeoData.timezone || 'Detecting...'}</span>
+                                </div>
                             </div>
                         </div>
                     `;
+
                     erCard.onclick = async () => {
+                        if (activeTaskState.isActive) return showAlert("Another task is in progress.");
+                        
+                        loader.style.display = 'flex';
+                        await detectUserGeo();
+                        loader.style.display = 'none';
+
                         if (!verifyTaskGeoAndVPN(erConf)) return;
-                        startTask({ id: 'interstitial', type: 'daily', action: 'ad', reward: erConf.rewardCoins || 15 });
+                        startTask({ id: 'interstitial', type: 'daily', action: 'ad', reward: erConf.rewardCoins || 15, timer: appConfig.dailyTasks?.interstitialTimer || 15 });
                     };
                 }
             }
 
             if (ipCard) {
-                if (ipConf.enabled === false) ipCard.style.display = 'none';
-                else {
+                if (ipConf.enabled === false) {
+                    ipCard.style.display = 'none';
+                } else {
                     ipCard.style.display = 'flex';
+                    const allowedIpStr = ipConf.allowedCountries && ipConf.allowedCountries.length > 0 
+                        ? ipConf.allowedCountries.map(c => `${countryEmojiMap[c.trim().toUpperCase()] || '🏳️'} ${c.trim().toUpperCase()}`).join(', ')
+                        : "🏳️ Any Country";
+
                     ipCard.innerHTML = `
+                        <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-slate-800/40 rounded-full pointer-events-none"></div>
                         <div class="flex flex-col space-y-3.5 w-full relative z-10">
                             <div class="flex items-center justify-between">
                                 <div class="flex items-center space-x-3">
@@ -1061,17 +1301,35 @@
                                     <i data-lucide="play" class="w-3 h-3 fill-slate-950"></i>
                                 </div>
                             </div>
+                            
                             <div class="border-t border-slate-800 pt-2.5 mt-1 space-y-1.5">
                                 <div class="flex items-center justify-between">
                                     <span class="text-[11px] text-slate-500 font-bold uppercase">Reward</span>
                                     <span class="text-xs font-extrabold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20">${ipConf.rewardCoins || 25} Coins</span>
                                 </div>
+                                <div class="flex items-start justify-between">
+                                    <span class="text-[11px] text-slate-500 font-bold uppercase mt-0.5">Target Countries</span>
+                                    <span class="text-xs font-bold text-slate-200 text-right max-w-[180px] leading-tight flex flex-wrap justify-end gap-1">
+                                        ${allowedIpStr}
+                                    </span>
+                                </div>
+                                <div class="flex items-center justify-between text-[10px] text-slate-500 font-medium">
+                                    <span>Your Time Zone</span>
+                                    <span class="text-slate-400 font-semibold">${userGeoData.timezone || 'Detecting...'}</span>
+                                </div>
                             </div>
                         </div>
                     `;
+
                     ipCard.onclick = async () => {
+                        if (activeTaskState.isActive) return showAlert("Another task is in progress.");
+                        
+                        loader.style.display = 'flex';
+                        await detectUserGeo();
+                        loader.style.display = 'none';
+
                         if (!verifyTaskGeoAndVPN(ipConf)) return;
-                        startTask({ id: 'video', type: 'daily', action: 'ad', reward: ipConf.rewardCoins || 25 });
+                        startTask({ id: 'video', type: 'daily', action: 'ad', reward: ipConf.rewardCoins || 25, timer: appConfig.dailyTasks?.videoTimer || 20 });
                     };
                 }
             }
@@ -1104,7 +1362,9 @@
                         </div>
                     </div>
                     <div class="w-8 h-8 flex-shrink-0 rounded-full border border-slate-200 flex items-center justify-center bg-slate-50 text-slate-400 transition-colors">
-                        ${isCompleted ? '<i data-lucide="check" class="w-4 h-4 text-emerald-500"></i>' : '<i data-lucide="arrow-right" class="w-4 h-4 group-hover:text-purple-600 transition-colors"></i>'}
+                        ${isCompleted ? 
+                        '<i data-lucide="check" class="w-4 h-4 text-emerald-500"></i>' : 
+                        '<i data-lucide="arrow-right" class="w-4 h-4 group-hover:text-purple-600 transition-colors"></i>'}
                     </div>
                 `;
                 if (!isCompleted) { el.onclick = () => startTask({ type, action: 'link', ...task }); }
@@ -1112,114 +1372,163 @@
             });
             lucide.createIcons();
         }
+        
+        window.startAutoTask = (task) => {
+            if (sessionStorage.getItem('autoModeActive') === 'true') {
+                showAlert("Auto mode is already running.", null, false, true, 2000);
+                return;
+            }
+            
+            sessionStorage.setItem('autoModeActive', 'true');
+            sessionStorage.setItem('autoModeTask', JSON.stringify(task));
+            
+            autoModeState.isActive = true;
+            autoModeState.task = task;
+            
+            showAlert("Auto Ad Mode Started! Please wait on this screen.", null, true, false, 1500);
+            
+            setTimeout(() => { 
+                if(sessionStorage.getItem('autoModeActive') === 'true') {
+                    startTask(task, true); 
+                }
+            }, 1500);
+        }
 
-        // ================= MODIFIED DIRECT POPUP AD HANDLER =================
-        function startTask(task) {
+        window.stopAutoTask = () => {
+            if (sessionStorage.getItem('autoModeActive') !== 'true') {
+                showAlert("Auto mode is not currently running.", null, false, true, 2000);
+                return;
+            }
+            
+            sessionStorage.removeItem('autoModeActive');
+            sessionStorage.removeItem('autoModeTask');
+            
+            autoModeState.isActive = false;
+            autoModeState.task = null;
+            if(autoModeState.timeoutId) clearTimeout(autoModeState.timeoutId);
+            
+            document.getElementById('auto-mode-indicator').classList.add('hidden');
+            showAlert("Auto Ad Mode Stopped. Switch to manual.", null, true, false, 2000);
+        }
+
+        function startTask(task, isAuto = false) {
+            if (activeTaskState.isActive) return showAlert("Another task is already in progress.", null, false, true);
+            
             if (task.type === 'daily') {
                 const today = new Date().toISOString().split('T')[0];
                 if (userData.lastAdWatchDate !== today) userData.dailyAdCount = 0;
                 if ((userData.dailyAdCount || 0) >= (appConfig.dailyAdLimit || 10)) {
+                    sessionStorage.removeItem('autoModeActive');
+                    sessionStorage.removeItem('autoModeTask');
+                    autoModeState.isActive = false; 
                     return showAlert("You have reached your daily limit for tasks.", null, false, true);
                 }
             }
             
-            // প্লে বাটনে ক্লিক করার সাথে সাথে সরাসরি অ্যাড পপআপ ওপেন ও ব্যাকগ্রাউন্ডে রিওয়ার্ড প্রসেসিং
-            if (task.action === 'ad' || task.type === 'daily') {
-                showNativeAdPopup(task);
-            } else if (task.action === 'link' && task.url) {
-                const win = window.open(task.url, '_blank');
-                let left = false;
-                const h = () => {
-                    if (document.hidden) left = true;
-                    else if (left) {
-                        window.removeEventListener('visibilitychange', h);
-                        completeTask(task);
+            activeTaskState.isActive = true; 
+            activeTaskState.task = task; 
+            activeTaskState.startTime = Date.now();
+            activeTaskState.timeLeft = task.timer || 0;
+            
+            if (resetActiveTaskState.eventHandler) {
+                window.removeEventListener("visibilitychange", resetActiveTaskState.eventHandler);
+                window.removeEventListener("blur", resetActiveTaskState.eventHandler);
+            }
+
+            if (task.action === 'ad' || task.type === 'daily') logAdEvent('click', task, 0);
+            if (task.action !== 'ad') startTimer(task.timer); 
+            
+            if (task.action === 'link' && task.url) {
+                window.open(task.url, '_blank');
+                activeTaskState.eventHandler = () => {
+                    if (!document.hidden && activeTaskState.isActive) { 
+                        if (activeTaskState.timeLeft <= 0) completeTask(); 
+                        else failTask();
                     }
                 };
-                window.addEventListener('visibilitychange', h);
+                window.addEventListener('visibilitychange', activeTaskState.eventHandler);
+            } else if (task.action === 'ad') {
+                // Play চাপলেই এড লোড হবে; এড দেখানো হলে (বা এডে ক্লিক করে অন্য লিংকে গিয়ে ফিরে এলে) সাথে সাথে কমপ্লিট + পয়েন্ট
+                let leftApp = false;
+                activeTaskState.eventHandler = () => {
+                    if (!activeTaskState.isActive || activeTaskState.task?.id !== task.id) return;
+                    if (document.hidden) leftApp = true;
+                    else if (leftApp) { leftApp = false; completeTask(); }
+                };
+                window.addEventListener("visibilitychange", activeTaskState.eventHandler);
+                showAdForTask(task).then(ok => {
+                    if (ok && activeTaskState.isActive && activeTaskState.task?.id === task.id) completeTask();
+                });
             }
         }
 
-                function showNativeAdPopup(task) {
-            const adSettings = appConfig.adSettings || {};
+        function startTimer(duration) {
+            const timerDuration = duration || 0;
+            const overlay = document.getElementById('task-timer-overlay');
+            const countdownEl = document.getElementById('timer-countdown');
+            const progressBar = document.getElementById('timer-progress-bar');
+            const autoIndicator = document.getElementById('auto-mode-indicator');
             
-            // যদি Earning Reward (Monetag) হয়
-            if (task.id === 'interstitial') {
-                const zoneId = adSettings.monetagZoneId; // অ্যাডমিন প্যানেল থেকে সেট করা জোন আইডি
-                if (!zoneId) {
-                    return showAlert("Monetag Zone ID is missing in Admin panel.", null, false, true);
-                }
+            activeTaskState.timeLeft = timerDuration;
 
-                // Monetag এর সঠিক পপআপ/ইন্টারস্টিশিয়াল জোন স্ক্রিপ্ট লোড ও ট্রিগার করা
-                loader.style.display = 'flex';
-                loadAdNetworkScript({ activeNetwork: 'monetag', monetagZoneId: zoneId }).then(() => {
-                    loader.style.display = 'none';
-                    const showFn = window[`show_${zoneId}`];
-                    if (typeof showFn === 'function') {
-                        // জোন আইডি অনুযায়ী অ্যাড পপআপ কল করা
-                        showFn().then(() => {
-                            // ইউজার অ্যাড দেখে শেষ করলে টাস্ক সফল হবে
-                            completeTask(task);
-                        }).catch(err => {
-                            console.warn("Ad display error:", err);
-                        });
-                    } else {
-                        // ফলব্যাক হিসেবে ডিরেক্ট জোন লিংক ওপেন হবে
-                        const adUrl = `//libtl.com/?zone=${zoneId}`;
-                        openAdWindow(adUrl, task);
-                    }
-                }).catch(err => {
-                    loader.style.display = 'none';
-                    showAlert("Failed to load ad network.", null, false, true);
-                });
-
-            } else if (task.id === 'video') {
-                // Gigapub বা অন্য নেটওয়ার্কের জন্য
-                const gId = adSettings.gigapubId;
-                if (!gId) {
-                    return showAlert("GigaPub ID is missing in Admin panel.", null, false, true);
-                }
-                loader.style.display = 'flex';
-                loadAdNetworkScript({ activeNetwork: 'gigapub', gigapubId: gId }).then(async () => {
-                    loader.style.display = 'none';
-                    if (typeof window.showGiga === 'function') {
-                        await window.showGiga();
-                        completeTask(task);
-                    } else {
-                        showAlert("GigaPub failed to load.", null, false, true);
-                    }
-                }).catch(() => {
-                    loader.style.display = 'none';
-                    showAlert("Failed to load GigaPub.", null, false, true);
-                });
-            } else {
-                // অন্যান্য কাস্টম টাস্কের লিংক
-                if (task.url) {
-                    openAdWindow(task.url, task);
-                }
-            }
-        }
-
-        // আলাদা একটি উইন্ডো ওপেন করে ইউজার রিটার্ন ট্র্যাক করার হেল্পার ফাংশন
-        function openAdWindow(url, task) {
-            const adWin = window.open(url, '_blank');
-            if (!adWin) {
-                showAlert("Please allow pop-ups in your browser.", null, false, true);
+            if (timerDuration <= 0) {
+                if (activeTaskState.task.action !== 'link') completeTask();
                 return;
             }
-            const interval = setInterval(() => {
-                if (adWin.closed) {
-                    clearInterval(interval);
-                    completeTask(task);
+
+            if (sessionStorage.getItem('autoModeActive') === 'true') {
+                autoIndicator.classList.remove('hidden');
+            } else {
+                autoIndicator.classList.add('hidden');
+            }
+
+            overlay.classList.remove('hidden');
+            countdownEl.textContent = activeTaskState.timeLeft;
+            progressBar.style.width = '100%'; 
+            progressBar.style.transition = 'none';
+
+            setTimeout(() => {
+                progressBar.style.transition = `width ${timerDuration}s linear`;
+                progressBar.style.width = '0%';
+            }, 50);
+
+            activeTaskState.ticker = setInterval(() => {
+                activeTaskState.timeLeft--; 
+                countdownEl.textContent = Math.max(0, activeTaskState.timeLeft);
+                
+                if (activeTaskState.timeLeft <= 0) {
+                    clearInterval(activeTaskState.ticker);
+                    if (!document.hidden) {
+                        completeTask();
+                    }
                 }
             }, 1000);
         }
 
-
-        async function completeTask(completedTask) {
+        function calculateDynamicReward(baseReward, taskKey) {
+            const settings = appConfig.dailyTasks;
+            if (!settings || !settings.peakTimeStart || !settings.peakTimeEnd) return baseReward;
             try {
-                let reward = completedTask.reward || 15;
+                if(checkTaskTimeStatus(settings)) {
+                    const peakReward = { interstitial: settings.peakInterstitialReward, popup: settings.peakPopupReward, video: settings.peakVideoReward, miniapp: settings.peakMiniappReward }[taskKey];
+                    return (peakReward && peakReward > 0) ? peakReward : baseReward;
+                }
+                return baseReward;
+            } catch (e) { return baseReward; }
+        }
+
+        async function completeTask() {
+            if (!activeTaskState.isActive) return;
+            const completedTask = { ...activeTaskState.task };
+            const isAutoModeActive = sessionStorage.getItem('autoModeActive') === 'true';
+            
+            resetActiveTaskState();
+            
+            try {
+                let reward = completedTask.reward;
+                if (completedTask.type === 'daily' && reward > 0) reward = calculateDynamicReward(reward, completedTask.id);
                 const finalReward = Math.round(reward > 0 ? reward : 0);
+
                 const today = new Date(); 
                 const dayId = getDayId(today); 
                 const weekId = getWeekId(today); 
@@ -1227,21 +1536,220 @@
                 const todayStr = today.toISOString().split('T')[0];
 
                 const updates = {};
+                
                 if (userData.lastDailyTaskDate !== dayId) { updates.dailyTaskCount = 1; updates.lastDailyTaskDate = dayId; } else updates.dailyTaskCount = increment(1);
                 if (userData.lastWeeklyReset !== weekId) { updates.weeklyTaskCount = 1; updates.lastWeeklyReset = weekId; } else updates.weeklyTaskCount = increment(1);
                 if (userData.lastMonthlyReset !== monthId) { updates.monthlyTaskCount = 1; updates.lastMonthlyReset = monthId; } else updates.monthlyTaskCount = increment(1);
                 
-                if (finalReward > 0) updates.balance = increment(finalReward);
+                if (finalReward > 0) {
+                    updates.balance = increment(finalReward);
+                }
 
                 if (completedTask.type === 'daily') {
                     updates.lastAdWatchDate = todayStr;
-                    updates.dailyAdCount = userData.lastAdWatchDate !== todayStr ? 1 : increment(1);
+                    if (userData.lastAdWatchDate !== todayStr) {
+                        updates.dailyAdCount = 1;
+                    } else {
+                        updates.dailyAdCount = increment(1);
+                    }
+                } else if (completedTask.limitType === 'daily') {
+                    updates[`completedTasks.${todayStr}`] = arrayUnion(completedTask.id);
                 }
 
                 await updateDoc(doc(db, "users", currentUser.uid), updates);
-                showAlert(`Task Successful! You earned ${finalReward} coins.`, null, true);
+
+                // Realtime Log to Firebase for Admin Analytics
+                if (completedTask.action === 'ad' || completedTask.type === 'daily') {
+                    logAdEvent('completed', completedTask, finalReward);
+                }
+
+                if (isAutoModeActive) {
+                    let msg = finalReward > 0 ? `Auto Mode: Earned ${finalReward} coins.` : `Auto Mode: Task Completed!`;
+                    showAlert(`${msg} Next ad loading...`, null, true, false, 2000);
+                    setTimeout(() => { 
+                        if (sessionStorage.getItem('autoModeActive') === 'true') {
+                            startTask(completedTask, true); 
+                        }
+                    }, 2000);
+                } else {
+                    let msg = finalReward > 0 ? `Task Successful! You earned ${finalReward} coins.` : `Task Completed Successfully!`;
+                    showAlert(msg, null, true);
+                }
             } catch (e) { 
+                sessionStorage.removeItem('autoModeActive');
+                sessionStorage.removeItem('autoModeTask');
                 showAlert("An error occurred during task completion.", null, false, true); 
+            }
+        }
+
+        async function logAdEvent(eventType, task, reward = 0) {
+            try {
+                if (!currentUser || !userData) return;
+                const taskTitle = task.id === 'video' ? 'Income Pro (GigaPub)' : (task.id === 'interstitial' ? 'Earning Reward (Monetag)' : (task.id || 'task'));
+                await addDoc(collection(db, "adLogs"), {
+                    eventType,
+                    userId: currentUser.uid,
+                    userName: userData.name || (userData.email || '').split('@')[0],
+                    userEmail: userData.email || '',
+                    taskId: task.id || '',
+                    taskTitle,
+                    reward,
+                    countryCode: userGeoData.country_code || "Unknown",
+                    countryName: userGeoData.country_name || "Unknown",
+                    ip: userGeoData.ip || "N/A",
+                    timezone: userGeoData.timezone || "N/A",
+                    deviceTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "N/A",
+                    timestamp: serverTimestamp()
+                });
+            } catch (e) { console.warn("Failed to save ad log:", e); }
+        }
+
+        async function failTask() {
+            if (!activeTaskState.isActive) return;
+            const failedTask = { ...activeTaskState.task };
+            resetActiveTaskState();
+            
+            sessionStorage.removeItem('autoModeActive');
+            sessionStorage.removeItem('autoModeTask');
+            if(autoModeState.isActive) {
+                autoModeState.isActive = false;
+                if(autoModeState.timeoutId) clearTimeout(autoModeState.timeoutId);
+            }
+
+            let template = failedTask.type === 'daily' ? appConfig.dailyTasks?.failNotificationText : appConfig.customTasks?.failNotificationText;
+            template = template || "Task failed! You must complete it to earn reward. Mistake #{failCount}. Block after {remainingFails} more.";
+
+            const userRef = doc(db, "users", currentUser.uid);
+            const newFailCount = (userData.failCount || 0) + 1;
+            const failLimit = appConfig.failLimitForBlock || 5;
+            
+            await updateDoc(userRef, { failCount: newFailCount });
+            userData.failCount = newFailCount;
+            
+            if (newFailCount >= failLimit) {
+                await updateDoc(userRef, { isBlocked: true });
+                showAlert("Your account is blocked due to too many failed tasks.", null, false, true);
+                await signOut(auth);
+            } else {
+                showAlert(template.replace('{failCount}', newFailCount).replace('{remainingFails}', failLimit - newFailCount), null, false, true);
+            }
+        }
+
+        function resetActiveTaskState() {
+            if (activeTaskState.timer) clearTimeout(activeTaskState.timer);
+            if (activeTaskState.ticker) clearInterval(activeTaskState.ticker);
+            if (activeTaskState.eventHandler) {
+                window.removeEventListener("visibilitychange", activeTaskState.eventHandler);
+                window.removeEventListener("blur", activeTaskState.eventHandler);
+            }
+            document.getElementById('task-timer-overlay').classList.add('hidden');
+            document.getElementById('auto-mode-indicator').classList.add('hidden');
+            activeTaskState = { isActive: false, task: null, timer: null, ticker: null, eventHandler: null, startTime: 0, timeLeft: 0 };
+        }
+
+        function loadAdNetworkScript(s) {
+            return new Promise((resolve, reject) => {
+                if(!s || !s.activeNetwork) return resolve();
+                const scriptId = `dynamic-ad-script-${s.activeNetwork}`;
+                if (document.getElementById(scriptId)) {
+                    return resolve(); 
+                }
+                const c = document.createElement("script");
+                c.id = scriptId;
+                c.async = true;
+                
+                c.onload = () => { setTimeout(resolve, 300); };
+                c.onerror = () => { c.remove(); reject(new Error(`Failed to load ${s.activeNetwork} network.`)); };
+
+                switch(s.activeNetwork) {
+                    case "monetag":
+                        if(s.monetagZoneId) {
+                            c.src = "//libtl.com/sdk.js";
+                            c.setAttribute("data-zone", s.monetagZoneId);
+                            c.setAttribute("data-sdk", `show_${s.monetagZoneId}`);
+                        } else { resolve(); return; }
+                        break;
+                    case "gigapub":
+                        if(s.gigapubId) {
+                            c.src = `https://ad.gigapub.tech/script?id=${s.gigapubId}`;
+                        } else { resolve(); return; }
+                        break;
+                    default:
+                        resolve(); return;
+                }
+                document.head.appendChild(c);
+            });
+        }
+        
+        // ================= ADSPARK =================
+        // Adspark SDK: showAdspark({ ymid }) -> Promise (resolve = এড শেষ, reject = এখন এড নেই)
+        const ADSPARK_SCRIPT_URL = "https://adspark-tma.top/api/public/sdk.js?k=62"; // Admin > Add Settings এ বদলানো যায়
+        async function showAdsparkAd(s) {
+            const url = s.adsparkScriptUrl || ADSPARK_SCRIPT_URL;
+            if (typeof window.showAdspark !== 'function') {
+                await new Promise((res, rej) => {
+                    const c = document.createElement('script');
+                    c.id = 'dynamic-ad-script-adspark'; c.async = true; c.src = url;
+                    c.onload = () => setTimeout(res, 300);
+                    c.onerror = () => { c.remove(); rej(new Error("Failed to load Adspark network.")); };
+                    document.head.appendChild(c);
+                });
+            }
+            if (typeof window.showAdspark !== 'function') throw new Error("Adspark script failed to initialize.");
+            const tg = window.Telegram?.WebApp;
+            const ymid = tg?.initDataUnsafe?.user?.id || currentUser?.uid;
+            await window.showAdspark({ ymid });
+        }
+
+        async function showAdForTask(task) {
+            const adSettings = appConfig.adSettings || {};
+            
+            try {
+                loader.style.display = 'flex'; 
+                const net = task.id === 'interstitial' ? (adSettings.earningNetwork || 'monetag') : (task.id === 'video' ? (adSettings.incomeProNetwork || 'gigapub') : '');
+                if (net === 'adspark') { await showAdsparkAd(adSettings); loader.style.display = 'none'; return true; }
+                
+                if (task.id === 'interstitial') {
+                    const z = adSettings.monetagZoneId;
+                    if (!z) throw new Error("Monetag Zone ID is missing in Admin panel settings.");
+                    
+                    await loadAdNetworkScript({ activeNetwork: 'monetag', monetagZoneId: z });
+                    loader.style.display = 'none';
+
+                    const f = `show_${z}`; 
+                    if (typeof window[f] === 'function') { 
+                        await window[f](); 
+                    } else { 
+                        throw new Error("Monetag script failed to initialize helper function."); 
+                    }
+                } else if (task.id === 'video') {
+                    const gId = adSettings.gigapubId;
+                    if (!gId) throw new Error("GigaPub Script ID is missing in Admin panel settings.");
+                    
+                    await loadAdNetworkScript({ activeNetwork: 'gigapub', gigapubId: gId });
+                    
+                    try {
+                        await waitForShowGiga(6000); 
+                    } catch(scriptError) {
+                        throw new Error(scriptError.message);
+                    }
+                    
+                    loader.style.display = 'none';
+
+                    await window.showGiga(); 
+                } else {
+                    throw new Error("Ad service unavailable for this specific task ID.");
+                }
+                return true;
+            } catch (e) { 
+                loader.style.display = 'none';
+                if (activeTaskState.isActive && activeTaskState.task?.id === task.id) {
+                    resetActiveTaskState();
+                    sessionStorage.removeItem('autoModeActive'); sessionStorage.removeItem('autoModeTask');
+                    autoModeState.isActive = false;
+                    showAlert((e && e.message) || "No ad available right now. Please try again later.", null, false, true);
+                }
+                return false;
             }
         }
 
@@ -1284,8 +1792,11 @@
                         else if (rank === 3) rankStyle = "bg-orange-100 text-orange-600 border-orange-300 shadow-sm";
 
                         item.className = 'dynamic-island-item !px-2.5 hover:border-indigo-200 bg-white';
+                        
                         let name = user.name ? String(user.name).trim() : 'User';
-                        name = name.replace(/NaN/ig, '').trim(); if(!name) name = 'User';
+                        name = name.replace(/NaN/ig, '').trim(); 
+                        if(!name) name = 'User';
+                        
                         let balance = Number(user.balance) || 0; 
                         
                         item.innerHTML = `<div class="flex items-center space-x-2.5"><div class="w-6 h-6 rounded-md flex items-center justify-center font-bold text-[10px] border ${rankStyle}">${rank}</div><div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-inner bg-gradient-to-br from-indigo-500 to-purple-600">${name.charAt(0).toUpperCase()}</div><div><h3 class="font-bold text-gray-900 text-xs">${name}</h3><p class="text-[9px] font-bold text-indigo-600 bg-indigo-50 inline-block px-1 py-0.5 rounded mt-0.5 border border-indigo-100">${balance.toLocaleString()} Coins</p></div></div>`;
@@ -1299,10 +1810,18 @@
             const e=document.getElementById("login-email").value.trim();
             const t=document.getElementById("login-password").value;
             if(!e||!t) return showAlert("Please enter email and password.", null, false, true);
+            
             loader.style.display="flex";
+            const failsafe = setTimeout(() => {
+                if (!userData && loader.style.display === "flex") {
+                    loader.style.display = "none";
+                    showAlert("Connection is slow. Please check your internet/VPN and try again.", null, false, true);
+                }
+            }, 20000);
             try {
                 await signInWithEmailAndPassword(auth, e, t);
             } catch(error) {
+                clearTimeout(failsafe);
                 showAlert(error.message, null, false, true); 
                 loader.style.display="none";
             }
@@ -1316,6 +1835,7 @@
             const selectedMethod = document.getElementById('withdraw-method').value; 
             let placeholder = `Enter your ${selectedMethod} Account Number`; 
             let labelText = `${selectedMethod} Number / Account`;
+            
             document.getElementById('payment-details-container').innerHTML = `
                 <div class="relative">
                     <label class="block text-[9px] font-extrabold text-slate-500 mb-1 uppercase tracking-wider pl-1">${labelText}</label>
@@ -1331,6 +1851,12 @@
         function showMainPage(pageId) { document.querySelectorAll('.main-page').forEach(p => { p.classList.remove('active'); p.style.display='none'; }); const a = document.getElementById(pageId); a.style.display='flex'; setTimeout(()=>a.classList.add('active'), 50); }
         
         window.navigateTo = (pageId) => { 
+            if (activeTaskState.isActive) { failTask(); }
+            
+            if (pageId !== 'home-page' && sessionStorage.getItem('autoModeActive') === 'true') {
+                window.stopAutoTask();
+            }
+
             document.querySelectorAll('.sub-page').forEach(p => p.classList.remove('active')); 
             document.getElementById(pageId).classList.add('active'); 
             document.querySelectorAll('.nav-link').forEach(link => { link.classList.remove('active'); if (link.dataset.page === pageId) link.classList.add('active'); }); 
@@ -1347,8 +1873,8 @@
             document.getElementById('show-signup').addEventListener('click', (e) => { e.preventDefault(); switchAuthView('signup-view'); }); document.getElementById('show-login').addEventListener('click', (e) => { e.preventDefault(); switchAuthView('login-view'); }); document.getElementById('signup-btn').addEventListener('click', handleSignup); document.getElementById('login-btn').addEventListener('click', handleLogin); document.getElementById('logout-btn').addEventListener('click', handleLogout); document.getElementById('show-forgot-password').addEventListener('click', (e) => { e.preventDefault(); switchAuthView('forgot-password-view'); }); document.getElementById('back-to-login').addEventListener('click', (e) => { e.preventDefault(); switchAuthView('login-view'); }); document.getElementById('forgot-btn').addEventListener('click', handleForgotPassword); document.querySelectorAll('.nav-link').forEach(link => link.addEventListener('click', (e) => { e.preventDefault(); navigateTo(link.dataset.page); })); document.getElementById('notification-bell').addEventListener('click', () => navigateTo('notifications-page')); document.getElementById('withdraw-btn').addEventListener('click', handleWithdrawal); document.getElementById('edit-profile-btn').addEventListener('click', toggleProfileEdit); document.getElementById('withdraw-method').addEventListener('change', updateDynamicPaymentFields); document.getElementById('copy-referral-code-btn').addEventListener('click', copyReferralCode); document.getElementById('share-referral-link-btn').addEventListener('click', shareReferralLink); document.getElementById('apply-promo-code-btn').addEventListener('click', handleApplyPromoCode); document.getElementById('apply-referral-code-btn').addEventListener('click', handleApplyReferralCode); 
         }
         
-        function copyReferralCode() { const code = userData.referralCode; if(!code) return showAlert("Referral code not available yet."); navigator.clipboard.writeText(code).then(() => { showAlert("Referral code copied!", null, true); }); }
-        async function shareReferralLink() { const code = userData.referralCode; if(!code) return showAlert("Referral code not available yet."); const base = appConfig.appUrl || 'https://t.me/MegaTasky_Bot/app'; const referralLink = base + (base.includes('?') ? '&' : '?') + 'startapp=' + code; const defaultTemplate = `Join me on MegaTasky!\nUse my code: {referral_code}\nLaunch here: {referral_link}`; const template = appConfig.referralSettings?.shareTextTemplate || defaultTemplate; let shareText = template.replaceAll('{referral_code}', code).replaceAll('{referral_link}', referralLink); if (navigator.share) { try { await navigator.share({ title: 'Join MegaTasky!', text: shareText, url: referralLink }); } catch (error) {} } else { navigator.clipboard.writeText(shareText).then(() => { showAlert("Referral message copied!", null, true); }); } }
+        function copyReferralCode() { const code = userData.referralCode; if(!code) return showAlert("Referral code not available yet."); navigator.clipboard.writeText(code).then(() => { showAlert("Referral code copied!", null, true); }).catch(err => { showAlert("Failed to copy link.", null, false, true); }); }
+        async function shareReferralLink() { const code = userData.referralCode; if(!code) return showAlert("Referral code not available yet."); const base = appConfig.appUrl || 'https://t.me/MegaTasky_Bot/app'; const referralLink = base + (base.includes('?') ? '&' : '?') + 'startapp=' + code; const defaultTemplate = `Join me on MegaTasky!\nUse my code: {referral_code}\nLaunch here: {referral_link}`; const template = appConfig.referralSettings?.shareTextTemplate || defaultTemplate; let shareText = template.replaceAll('{referral_code}', code).replaceAll('{referral_link}', referralLink); if (navigator.share) { try { await navigator.share({ title: 'Join MegaTasky!', text: shareText, url: referralLink, }); } catch (error) {} } else { navigator.clipboard.writeText(shareText).then(() => { showAlert("Referral message copied!", null, true); }); } }
         async function handleApplyPromoCode() { const codeInput = document.getElementById('apply-promo-code-input'); const code = codeInput.value.trim().toUpperCase(); if (!code) return showAlert("Please enter a bonus code.", null, false, true); if (userData.usedPromoCodes && userData.usedPromoCodes.includes(code)) return showAlert("Code already used.", null, false, true); loader.style.display = 'flex'; try { const configRef = doc(db, "config", "main"); const configSnap = await getDoc(configRef); if (!configSnap.exists()) throw new Error("Verification failed."); const remoteConfig = configSnap.data(); const promoCodes = remoteConfig.specialPromoCodes ||[]; const codeData = promoCodes.find(p => p.code === code); if (!codeData) throw new Error("Invalid bonus code."); if (codeData.usedCount >= codeData.limit) throw new Error("Code expired."); const userRef = doc(db, "users", currentUser.uid); await updateDoc(userRef, { usedPromoCodes: arrayUnion(code), balance: increment(codeData.bonus) }); const codeIndex = promoCodes.findIndex(p => p.code === code); promoCodes[codeIndex].usedCount++; await updateDoc(configRef, { specialPromoCodes: promoCodes }); codeInput.value = ''; showAlert(`Success! You got ${codeData.bonus} coins.`, null, true); } catch (e) { showAlert(e.message, null, false, true); } finally { loader.style.display = 'none'; } }
         async function handleApplyReferralCode() { const code = document.getElementById('apply-referral-code-input').value.trim().toUpperCase(); if (!code) return showAlert("Enter a referral code.", null, false, true); if (userData.referredBy) return showAlert("Already used a code.", null, false, true); if (code === userData.referralCode) return showAlert("Cannot use own code.", null, false, true); loader.style.display = 'flex'; try { const usersRef = collection(db, "users"); const q = query(usersRef, where("referralCode", "==", code), limit(1)); const querySnapshot = await getDocs(q); if (querySnapshot.empty) throw new Error("Invalid code."); const referrerRef = doc(db, "users", querySnapshot.docs[0].id); const bonusNewUser = appConfig.referralSettings?.bonusNewUser || 0; const bonusReferrer = appConfig.referralSettings?.bonusReferrer || 0; const referrerUpdates = { referralCount: increment(1) }; if (bonusReferrer > 0) referrerUpdates.balance = increment(bonusReferrer); await updateDoc(referrerRef, referrerUpdates); const userRef = doc(db, "users", currentUser.uid); const userUpdates = { referredBy: code }; if (bonusNewUser > 0) userUpdates.balance = increment(bonusNewUser); await updateDoc(userRef, userUpdates); document.getElementById('apply-referral-section').classList.add('hidden'); showAlert(bonusNewUser > 0 ? `Code applied! You got ${bonusNewUser} coins.` : "Code applied!", null, true); } catch (e) { showAlert(e.message, null, false, true); } finally { loader.style.display = 'none'; } }
         async function loadReferralList() {
@@ -1361,7 +1887,7 @@
                 const e = (t) => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
                 box.innerHTML = snap.empty ? '' : '<h3 class="text-[12px] font-extrabold text-slate-900 px-1">Your Referrals</h3>' + snap.docs.map(d => { const u = d.data(); const nm = u.telegramUsername || u.name || 'User';
                     return `<div class="bg-white border border-slate-100 rounded-2xl p-2.5 flex items-center space-x-3 shadow-sm">${u.telegramPhoto ? `<img src="${e(u.telegramPhoto)}" class="w-9 h-9 rounded-full object-cover">` : `<div class="w-9 h-9 rounded-full bg-indigo-50 text-indigo-600 font-extrabold flex items-center justify-center text-xs">${e(nm.charAt(0).toUpperCase())}</div>`}<p class="text-xs font-extrabold text-slate-800 truncate">${e(nm)}</p></div>`; }).join('');
-            } catch (err) {}
+            } catch (err) { console.warn(err); }
         }
         
         function toggleProfileEdit() {
@@ -1372,10 +1898,18 @@
             inputEl.classList.toggle("hidden");
             inputEl.focus();
             if(inputEl.classList.contains("hidden")) {
-                btnContainer.innerHTML = `<button id="edit-profile-btn" class="w-full btn bg-slate-50 text-indigo-600 hover:bg-slate-100 py-2.5 rounded-xl font-bold border border-slate-200 text-xs flex items-center justify-center"><i data-lucide="edit" class="w-3.5 h-3.5 mr-1.5"></i> Edit Profile</button>`;
+                btnContainer.innerHTML = `
+                    <button id="edit-profile-btn" class="w-full btn bg-slate-50 text-indigo-600 hover:bg-slate-100 py-2.5 rounded-xl font-bold border border-slate-200 text-xs flex items-center justify-center">
+                        <i data-lucide="edit" class="w-3.5 h-3.5 mr-1.5"></i> Edit Profile
+                    </button>
+                `;
                 document.getElementById("edit-profile-btn").addEventListener("click", toggleProfileEdit);
             } else {
-                btnContainer.innerHTML = `<button id="save-profile-btn" class="w-full btn btn-primary py-2.5 rounded-xl shadow-sm text-xs flex items-center justify-center"><i data-lucide="save" class="w-3.5 h-3.5 mr-1.5"></i> Save Changes</button>`;
+                btnContainer.innerHTML = `
+                    <button id="save-profile-btn" class="w-full btn btn-primary py-2.5 rounded-xl shadow-sm text-xs flex items-center justify-center">
+                        <i data-lucide="save" class="w-3.5 h-3.5 mr-1.5"></i> Save Changes
+                    </button>
+                `;
                 document.getElementById("save-profile-btn").addEventListener("click", saveProfile);
             }
             lucide.createIcons();
@@ -1403,7 +1937,7 @@
                                 </div>
                                 <div>
                                     <p class="font-bold text-slate-800 text-xs">${w.amount} Coins</p>
-                                    <p class="text-[8px] font-medium text-slate-500 mt-0.5">${dt}</p>
+                                    <p class="text-[8px] font-medium text-slate-500 mt-0.5">${dt}</p>${w.updatedAt&&st!=="pending"?`<p class="text-[8px] font-bold text-slate-500">${st==="approved"?"Approved":"Rejected"}: ${new Date(w.updatedAt).toLocaleString()}</p>`:""}${st==="rejected"&&w.rejectReason?`<p class="text-[9px] font-bold text-red-500 mt-1">Reason: ${w.rejectReason}</p>`:""}
                                 </div>
                             </div>
                             <div class="text-[8px] font-bold text-indigo-600 uppercase tracking-wide bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">${w.method}</div>
@@ -1414,7 +1948,11 @@
                 if(a<1)aC.innerHTML='<p class="text-center text-[9px] font-medium text-slate-400 py-1.5 uppercase tracking-wider">Empty</p>';
                 if(r<1)rC.innerHTML='<p class="text-center text-[9px] font-medium text-slate-400 py-1.5 uppercase tracking-wider">Empty</p>';
                 lucide.createIcons();
-            }catch(e){}
+            }catch(e){
+                pC.innerHTML='<p class="text-[10px] font-medium text-red-400">Error</p>';
+                aC.innerHTML='<p class="text-[10px] font-medium text-red-400">Error</p>';
+                rC.innerHTML='<p class="text-[10px] font-medium text-red-400">Error</p>';
+            }
         }
         
         async function handleWithdrawal(){const a=parseInt(document.getElementById("withdraw-amount").value),m=document.getElementById("withdraw-method").value,pd=document.getElementById("payment-detail-input")?.value.trim(),min=appConfig.minWithdrawal||0;if(!a||a<=0)return showAlert("Enter a valid amount.", null, false, true);if(a<min)return showAlert(`Minimum withdrawal is ${min} coins.`, null, false, true);if(a>userData.balance)return showAlert("Insufficient balance.", null, false, true);if(!pd)return showAlert("Provide payment details.", null, false, true);loader.style.display="flex";try{await updateBalance(-a);await addDoc(collection(db,"withdrawals"),{userId:currentUser.uid,userName:userData.name,amount:a,method:m,paymentDetail:pd,status:"pending",requestedAt:serverTimestamp()});showAlert("Withdrawal request submitted successfully!", null, true);document.getElementById('withdraw-amount').value="";document.getElementById('payment-detail-input').value="";loadWithdrawalHistory()}catch(e){showAlert("Request failed: "+e.message, null, false, true);await updateBalance(a)}finally{loader.style.display="none"}}
@@ -1427,7 +1965,17 @@
             iconWrap.className = "alert-icon-wrapper"; btn.className = "btn w-full py-2 rounded-xl text-white font-bold transition text-xs";
             if(isSuccess && !isWarning) { title.textContent = "Awesome!"; iconWrap.className = "alert-icon-wrapper alert-success"; icon.setAttribute("data-lucide", "check-circle"); btn.className = "btn w-full py-2 rounded-xl text-white font-bold transition text-xs bg-green-500 hover:bg-green-600"; } else if (isWarning) { title.textContent = "Warning"; iconWrap.className = "alert-icon-wrapper alert-error"; icon.setAttribute("data-lucide", "alert-triangle"); btn.className = "btn w-full py-2 rounded-xl text-white font-bold transition text-xs bg-red-500 hover:bg-red-600"; } else { title.textContent = "Notice"; iconWrap.className = "alert-icon-wrapper alert-info"; icon.setAttribute("data-lucide", "info"); btn.className = "btn btn-primary w-full py-2 rounded-xl text-white font-bold transition text-xs"; }
             lucide.createIcons(); a.classList.remove("hidden"); 
-            btn.onclick = () => { a.classList.add("hidden"); };
+            btn.onclick = () => {
+                a.classList.add("hidden");
+                if (window.activeAlertTimer) { clearTimeout(window.activeAlertTimer); window.activeAlertTimer = null; }
+            };
+
+            if (window.activeAlertTimer) clearTimeout(window.activeAlertTimer);
+            if (autoCloseMs > 0) {
+                window.activeAlertTimer = setTimeout(() => {
+                    a.classList.add("hidden");
+                }, autoCloseMs);
+            }
         }
     </script>
 </body>
