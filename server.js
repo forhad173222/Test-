@@ -1,9 +1,18 @@
-// প্রক্সি রাউটিং আপডেট ভার্সন
+const express = require('express');
+const fetch = require('node-fetch');
+const path = require('path');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// স্ট্যাটিক ফাইল হিসেবে আপনার ফ্রন্টএন্ড পরিবেশন করার জন্য
+app.use(express.static(__dirname));
+
+// প্রক্সি রাউটিং
 app.use('/proxy/*', async (req, res) => {
     try {
         let targetUrl = req.originalUrl.replace('/proxy/', '');
         
-        // যদি ইউআরএলে http বা https না থাকে, তবে https:// যুক্ত করে দেওয়া
         if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
             targetUrl = 'https://' + targetUrl;
         }
@@ -31,4 +40,8 @@ app.use('/proxy/*', async (req, res) => {
         console.error('[BACKEND PROXY ERROR]:', error.message);
         res.status(500).send({ error: 'Proxy request failed', details: error.message });
     }
+});
+
+app.listen(PORT, () => {
+    console.log(`[SERVER] MegaTasky backend running on port ${PORT}`);
 });
