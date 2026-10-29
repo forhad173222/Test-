@@ -5,8 +5,13 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// স্ট্যাটিক ফাইল হিসেবে আপনার ফ্রন্টএন্ড পরিবেশন করার জন্য
+// স্ট্যাটিক ফাইল পরিবেশন করার জন্য
 app.use(express.static(__dirname));
+
+// রুট রাউট: ব্রাউজারে লিংক ওপেন করলে সরাসরি index.html দেখাবে
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // প্রক্সি রাউটিং
 app.use('/proxy/*', async (req, res) => {
