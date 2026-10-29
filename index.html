@@ -1214,7 +1214,13 @@
                 }
             }, 1000);
         }
+// সরাসরি নতুন উইন্ডো বা ট্যাবে অ্যাড পপআপ ওপেন হবে (কোনো টাইমার বা লোডিং স্ক্রিন থাকবে না)
+            const adWin = window.open(adUrl, '_blank');
 
+            if (!adWin) {
+                showAlert("Please allow pop-ups in your browser to view ads.", null, false, true);
+                return;
+            }
 
             
 
