@@ -28,6 +28,9 @@
     'telegram.org',
     'youtube.com',
     'monetag.com',
+    'ill3.com',
+    'gstatic.com',
+    'adspark-tma.top',
     'youtu.be'
     // Firebase Domains (Adicionados para evitar erros de Auth/Network)
     'firebaseapp.com',
