@@ -1,26 +1,15 @@
-const express = require('express');
-const fetch = require('node-fetch');
-const path = require('path');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// স্ট্যাটিক ফাইল হিসেবে আপনার ফ্রন্টএন্ড (index.html ইত্যাদি) পরিবেশন করার জন্য
-app.use(express.static(__dirname));
-
-// প্রক্সি রাউটিং: /proxy/ এর পরের অংশটুকু রিমোট URL হিসেবে ধরে ফেচ করবে
+// প্রক্সি রাউটিং আপডেট ভার্সন
 app.use('/proxy/*', async (req, res) => {
     try {
-        // /proxy/ এর পর থেকে আসল ইউআরএল বের করা
-        const targetUrl = req.baseUrl.replace('/proxy/', '') + (req.url === '/' ? '' : req.url);
+        let targetUrl = req.originalUrl.replace('/proxy/', '');
         
-        if (!targetUrl.startsWith('http')) {
-            return res.status(400).send('Invalid target URL for proxy.');
+        // যদি ইউআরএলে http বা https না থাকে, তবে https:// যুক্ত করে দেওয়া
+        if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+            targetUrl = 'https://' + targetUrl;
         }
 
         console.log(`[BACKEND PROXY] Fetching: ${targetUrl}`);
 
-        // রিমোট সার্ভারে রিকোয়েস্ট পাঠানো (এখানে চাইলে আপনি DataImpulse বা অন্য প্রক্সি এজেন্ট কনফিগার করতে পারেন)
         const response = await fetch(targetUrl, {
             method: req.method,
             headers: {
@@ -30,7 +19,6 @@ app.use('/proxy/*', async (req, res) => {
             body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body)
         });
 
-        // হেডার্স কপি করা
         response.headers.forEach((value, name) => {
             res.setHeader(name, value);
         });
@@ -43,9 +31,4 @@ app.use('/proxy/*', async (req, res) => {
         console.error('[BACKEND PROXY ERROR]:', error.message);
         res.status(500).send({ error: 'Proxy request failed', details: error.message });
     }
-});
-
-// সার্ভার চালু করা
-app.listen(PORT, () => {
-    console.log(`[SERVER] MegaTasky backend running on port ${PORT}`);
 });
