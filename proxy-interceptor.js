@@ -69,7 +69,7 @@
     }
   }
 
-  // Função para converter URL para URL do proxy
+    // Função para converter URL para URL do proxy
   function toProxyUrl(url) {
     var urlStr = url.toString();
     // Remover protocolo
@@ -82,6 +82,7 @@
     }
     return '/proxy/' + urlStr;
   }
+  
 
   // ===== INTERCEPTAR FETCH =====
   var originalFetch = window.fetch;
