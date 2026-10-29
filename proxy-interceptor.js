@@ -27,6 +27,7 @@
     'telegram.me',
     'telegram.org',
     'youtube.com',
+    'monetag.com',
     'youtu.be'
     // Firebase Domains (Adicionados para evitar erros de Auth/Network)
     'firebaseapp.com',
