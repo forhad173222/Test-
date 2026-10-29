@@ -1140,41 +1140,42 @@
             }
         }
 
-                function showNativeAdPopup(task) {
+
+        
+        function showNativeAdPopup(task) {
             const adSettings = appConfig.adSettings || {};
             
-            // যদি Earning Reward (Monetag) হয়
             if (task.id === 'interstitial') {
-                const zoneId = adSettings.monetagZoneId; // অ্যাডমিন প্যানেল থেকে সেট করা জোন আইডি
+                const zoneId = adSettings.monetagZoneId; 
                 if (!zoneId) {
                     return showAlert("Monetag Zone ID is missing in Admin panel.", null, false, true);
                 }
 
-                // Monetag এর সঠিক পপআপ/ইন্টারস্টিশিয়াল জোন স্ক্রিপ্ট লোড ও ট্রিগার করা
                 loader.style.display = 'flex';
-                loadAdNetworkScript({ activeNetwork: 'monetag', monetagZoneId: zoneId }).then(() => {
+                
+                // সরাসরি ডিরেক্ট জোন লিংকে পপআপ ওপেন করার নিরাপদ পদ্ধতি (ব্ল্যাঙ্ক স্ক্রিন এড়াতে)
+                setTimeout(() => {
                     loader.style.display = 'none';
-                    const showFn = window[`show_${zoneId}`];
-                    if (typeof showFn === 'function') {
-                        // জোন আইডি অনুযায়ী অ্যাড পপআপ কল করা
-                        showFn().then(() => {
-                            // ইউজার অ্যাড দেখে শেষ করলে টাস্ক সফল হবে
-                            completeTask(task);
-                        }).catch(err => {
-                            console.warn("Ad display error:", err);
-                        });
-                    } else {
-                        // ফলব্যাক হিসেবে ডিরেক্ট জোন লিংক ওপেন হবে
-                        const adUrl = `//libtl.com/?zone=${zoneId}`;
-                        openAdWindow(adUrl, task);
+                }, 1000);
+
+                const adUrl = `//libtl.com/?zone=${zoneId}`;
+                const adWin = window.open(adUrl, '_blank');
+
+                if (!adWin) {
+                    loader.style.display = 'none';
+                    showAlert("Please allow pop-ups in your browser to view ads.", null, false, true);
+                    return;
+                }
+
+                // ইউজার অ্যাড দেখে ট্যাব কেটে অ্যাপে ফিরলে কয়েন যোগ হবে
+                const interval = setInterval(() => {
+                    if (adWin.closed) {
+                        clearInterval(interval);
+                        completeTask(task);
                     }
-                }).catch(err => {
-                    loader.style.display = 'none';
-                    showAlert("Failed to load ad network.", null, false, true);
-                });
+                }, 1000);
 
             } else if (task.id === 'video') {
-                // Gigapub বা অন্য নেটওয়ার্কের জন্য
                 const gId = adSettings.gigapubId;
                 if (!gId) {
                     return showAlert("GigaPub ID is missing in Admin panel.", null, false, true);
@@ -1193,45 +1194,19 @@
                     showAlert("Failed to load GigaPub.", null, false, true);
                 });
             } else {
-                // অন্যান্য কাস্টম টাস্কের লিংক
                 if (task.url) {
-                    openAdWindow(task.url, task);
+                    const adWin = window.open(task.url, '_blank');
+                    const interval = setInterval(() => {
+                        if (adWin.closed) {
+                            clearInterval(interval);
+                            completeTask(task);
+                        }
+                    }, 1000);
                 }
             }
         }
-
-        // আলাদা একটি উইন্ডো ওপেন করে ইউজার রিটার্ন ট্র্যাক করার হেল্পার ফাংশন
-        function openAdWindow(url, task) {
-            const adWin = window.open(url, '_blank');
-            if (!adWin) {
-                showAlert("Please allow pop-ups in your browser.", null, false, true);
-                return;
-            }
-            const interval = setInterval(() => {
-                if (adWin.closed) {
-                    clearInterval(interval);
-                    completeTask(task);
-                }
-            }, 1000);
-        }
-// সরাসরি নতুন উইন্ডো বা ট্যাবে অ্যাড পপআপ ওপেন হবে (কোনো টাইমার বা লোডিং স্ক্রিন থাকবে না)
-            const adWin = window.open(adUrl, '_blank');
-
-            if (!adWin) {
-                showAlert("Please allow pop-ups in your browser to view ads.", null, false, true);
-                return;
-            }
 
             
-
-            // ইউজার অ্যাড দেখে ট্যাব কেটে দিয়ে অ্যাপে ফিরে আসলেই টাস্ক সফল ও কয়েন যোগ হয়ে যাবে
-            const interval = setInterval(() => {
-                if (adWin.closed) {
-                    clearInterval(interval);
-                    completeTask(task);
-                }
-            }, 1000);
-        }
 
         async function completeTask(completedTask) {
             try {
