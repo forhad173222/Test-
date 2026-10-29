@@ -22,6 +22,12 @@
     // APIs internas do app
     'monetag-postback-server-production.up.railway.app',
     'manus-analytics.com',
+    // টেলিগ্রাম এবং সোশ্যাল মিডিয়া ডোমেইনগুলো এখানে যুক্ত করুন (যাতে প্রক্সি ব্লক না করে)
+    't.me',
+    'telegram.me',
+    'telegram.org',
+    'youtube.com',
+    'youtu.be'
     // Firebase Domains (Adicionados para evitar erros de Auth/Network)
     'firebaseapp.com',
     'firebaseio.com',
